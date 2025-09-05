@@ -28,10 +28,8 @@ def process_tiff_with_clouds(input_path, output_folder, window_size=512):
     with rio.open(input_path) as src:
         # Get metadata
         meta = src.meta
-
         # Define window for processing (you can adjust this as needed)
         window = Window(col_off=300, row_off=600, width=window_size, height=window_size)
-
         # Read data within the window and normalize
         data = src.read(window=window) / 1e4
         transform = src.window_transform(window)
@@ -54,21 +52,37 @@ def process_tiff_with_clouds(input_path, output_folder, window_size=512):
     # Generate segmentation mask (0: clear sky, 1: cloud, 2: thin cloud)
     seg = scg.segmentation_mask(cmask, thin_range=(0.1, 0.5))[0]
 
-    # Update metadata for saving
-    meta.update({
+    cloud_meta = meta.copy()
+    cloud_meta.update({
         'width': window_size,
         'height': window_size,
-        'count': cl.shape[1],
+        'count': cl.shape[1],  # Number of channels in cloud data
+        'transform': transform
+    })
+
+    # Update metadata for saving the original image
+    original_meta = meta.copy()
+    original_meta.update({
+        'width': window_size,
+        'height': window_size,
+        'count': data.shape[0],  # Number of channels in original data
         'transform': transform
     })
 
     # Define output file paths
     cloud_tiff_path = os.path.join(output_folder, f"{base_filename}_simuclouds.tif")
     mask_png_path = os.path.join(output_folder, f"{base_filename}_simuclouds_mask.png")
+    original_tiff_path = os.path.join(output_folder, f"{base_filename}_original.tif")
 
     # Save cloudy image as TIFF
-    with rio.open(cloud_tiff_path, 'w', **meta) as dst:
-        dst.write(cl[0].numpy())
+    with rio.open(cloud_tiff_path, 'w', **cloud_meta) as dst:
+        cloud_data = (cl[0].numpy() * 1e4).astype(cloud_meta['dtype'])
+        dst.write(cloud_data)
+
+    # Save original image as TIFF
+    with rio.open(original_tiff_path, 'w', **original_meta) as dst:
+        original_data = (data_clean.numpy() * 1e4).astype(original_meta['dtype'])
+        dst.write(original_data)
 
     # Save mask as PNG
     mask = seg.numpy()
@@ -77,10 +91,8 @@ def process_tiff_with_clouds(input_path, output_folder, window_size=512):
     mask_png[mask == 1] = 255  # thick cloud
 
     Image.fromarray(mask_png).save(mask_png_path)
-
     print(f"Processed {input_path} and saved outputs to {output_folder}")
-
-    return cloud_tiff_path, mask_png_path
+    return cloud_tiff_path, mask_png_path, original_tiff_path
 
 
 def process_all_tiffs(input_folder, output_base_folder):
@@ -106,12 +118,12 @@ def process_all_tiffs(input_folder, output_base_folder):
         output_folder = Path(output_base_folder) / parent_folder
 
         # Process the TIFF file
-        cloud_path, mask_path = process_tiff_with_clouds(
+        cloud_path, mask_path, original_path = process_tiff_with_clouds(
             str(tiff_file),
             str(output_folder)
         )
 
-        print(f"Generated: {cloud_path} and {mask_path}")
+        print(f"Generated: {cloud_path}, {mask_path}, and {original_path}")
 
 
 if __name__ == "__main__":
